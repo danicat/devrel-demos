@@ -7,8 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/utils/cn";
 import ProgressBar from "@/components/ui/progress-bar";
 import { ExperimentRecord } from "@/types/domain";
-import { toggleLock } from "@/app/api/api";
+import { toggleLock } from "@/lib/api";
 import LockToggle from "@/components/LockToggle";
+import DeleteExperimentButton from "@/components/DeleteExperimentButton";
 import { useRouter } from "next/navigation";
 
 interface ExperimentsTableProps {
@@ -53,6 +54,7 @@ export default function ExperimentsTable({ experiments }: ExperimentsTableProps)
                         <TableHead className="w-[100px] text-right">Timeout</TableHead>
                         <TableHead className="w-[150px]">Progress</TableHead>
                         <TableHead className="w-[150px] text-right">Date</TableHead>
+                        <TableHead className="w-[80px] text-right">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -80,7 +82,7 @@ export default function ExperimentsTable({ experiments }: ExperimentsTableProps)
                                 </Badge>
                             </TableCell>
                             <TableCell>
-                                <Link href={`/experiments/${exp.id}`} className="hover:text-primary font-bold text-base transition-colors truncate block max-w-[350px]" title={exp.name}>
+                                <Link href={`/experiments/view?id=${exp.id}`} className="hover:text-primary font-bold text-base transition-colors truncate block max-w-[350px]" title={exp.name}>
                                     {exp.name || "Unnamed Experiment"}
                                 </Link>
                             </TableCell>
@@ -119,11 +121,16 @@ export default function ExperimentsTable({ experiments }: ExperimentsTableProps)
                             <TableCell className="text-right font-mono text-muted-foreground text-xs whitespace-nowrap">
                                 <ClientOnlyDate date={exp.timestamp} />
                             </TableCell>
+                            <TableCell className="text-right">
+                                {!exp.is_locked && (
+                                    <DeleteExperimentButton id={exp.id} name={exp.name} compact />
+                                )}
+                            </TableCell>
                         </TableRow>
                     ))}
                     {experiments.length === 0 && (
                         <TableRow>
-                            <TableCell colSpan={12} className="h-24 text-center text-muted-foreground">
+                            <TableCell colSpan={13} className="h-24 text-center text-muted-foreground">
                                 No experiments found. <Link href="/experiments/new" className="text-primary hover:underline font-bold">Launch your first experiment</Link>.
                             </TableCell>
                         </TableRow>

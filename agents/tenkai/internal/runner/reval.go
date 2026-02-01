@@ -11,7 +11,6 @@ import (
 	"github.com/GoogleCloudPlatform/devrel-demos/agents/tenkai/internal/db"
 	"github.com/GoogleCloudPlatform/devrel-demos/agents/tenkai/internal/db/models"
 	"github.com/GoogleCloudPlatform/devrel-demos/agents/tenkai/internal/jobs"
-	"github.com/GoogleCloudPlatform/devrel-demos/agents/tenkai/internal/workspace"
 )
 
 // ReEvaluateExperiment runs validation again for all completed runs in an experiment
@@ -41,14 +40,13 @@ func (r *Runner) ReEvaluateExperiment(expID int64, jobID string) error {
 		return fmt.Errorf("failed to fetch experiment: %w", err)
 	}
 
-	// Assuming we can find the experiment dir relative to CWD if we are running in the usual spot
-	cwd, _ := os.Getwd()
-	expDir, err := workspace.FindExperimentDir(cwd, exp.Timestamp, exp.Name)
+	expDir, err := r.WorkspaceMgr.FindExperimentDir(exp.Timestamp, exp.Name)
 	if err != nil {
 		jobMgr.FailJob(jobID, err)
 		return fmt.Errorf("failed to locate experiment directory: %w", err)
 	}
 	// Assuming scenarios are in standard location
+	cwd, _ := os.Getwd()
 	templatesDir := filepath.Join(cwd, "scenarios")
 
 	log.Printf("Re-evaluating %d runs for experiment %d", len(pendingRuns), expID)
@@ -89,12 +87,13 @@ func (r *Runner) ReEvaluateRun(runID int64, jobID string) error {
 		jobMgr.FailJob(jobID, err)
 		return fmt.Errorf("failed to fetch experiment: %w", err)
 	}
-	cwd, _ := os.Getwd()
-	expDir, err := workspace.FindExperimentDir(cwd, exp.Timestamp, exp.Name)
+
+	expDir, err := r.WorkspaceMgr.FindExperimentDir(exp.Timestamp, exp.Name)
 	if err != nil {
 		jobMgr.FailJob(jobID, err)
 		return fmt.Errorf("failed to locate experiment directory: %w", err)
 	}
+	cwd, _ := os.Getwd()
 	templatesDir := filepath.Join(cwd, "scenarios")
 
 	if err := r.reEvalInternal(run, expDir, templatesDir); err != nil {
@@ -113,12 +112,34 @@ func (r *Runner) reEvalInternal(run *models.RunResult, expDir, templatesDir stri
 
 	wsPath := filepath.Join(expDir, run.Alternative, run.Scenario, fmt.Sprintf("rep-%d", run.Repetition))
 	if _, err := os.Stat(wsPath); os.IsNotExist(err) {
-		// Try relaunch logic?
-		// For now, strict check.
-		log.Printf("Warning: Workspace path not found: %s", wsPath)
-		return fmt.Errorf("workspace not found")
+		// Workspace missing (common in Cloud Run / Distributed mode)
+		// Try to restore from Storage to a temporary directory
+		if r.Storage != nil {
+			tempDir, err := os.MkdirTemp("", fmt.Sprintf("tenkai-reval-%d-*", run.ID))
+			if err != nil {
+				return fmt.Errorf("creating temp dir for restoration: %w", err)
+			}
+			// Ideally we defer removal, but for debugging maybe keep?
+			// defer os.RemoveAll(tempDir)
+			// Let's remove it to save space on Cloud Run
+			defer func() { _ = os.RemoveAll(tempDir) }()
+
+			log.Printf("Restoring artifacts for Run %d to %s...", run.ID, tempDir)
+			if err := r.Storage.DownloadRunArtifacts(context.Background(), run.ID, tempDir); err != nil {
+				return fmt.Errorf("CRITICAL: failed to restore artifacts: %w. Validation cannot proceed.", err)
+			}
+
+			// Use the temp dir as the workspace path
+			wsPath = tempDir
+		} else {
+			return fmt.Errorf("CRITICAL: Workspace path not found and no Storage configured: %s", wsPath)
+		}
 	}
 	projectPath := filepath.Join(wsPath, "project")
+	// If projectPath doesn't exist (e.g. restoration was partial or empty), create it
+	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
+		_ = os.MkdirAll(projectPath, 0755)
+	}
 
 	// Load Scenario Config
 	scenTemplatePath := filepath.Join(templatesDir, run.Scenario, "scenario.yaml")
@@ -129,7 +150,7 @@ func (r *Runner) reEvalInternal(run *models.RunResult, expDir, templatesDir stri
 
 	// Sync Assets (Update workspace with latest scenario files)
 	// We need the template path to copy from
-	if err := r.WorkspaceMgr.SyncAssets(scenCfg, filepath.Dir(scenTemplatePath), projectPath); err != nil {
+	if err := r.WorkspaceMgr.SyncAssets(context.Background(), scenCfg, filepath.Dir(scenTemplatePath), projectPath); err != nil {
 		return fmt.Errorf("syncing assets: %w", err)
 	}
 

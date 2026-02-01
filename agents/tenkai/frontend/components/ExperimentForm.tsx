@@ -11,7 +11,7 @@ import { Badge } from "./ui/badge";
 import { cn } from "@/utils/cn";
 import { ScenarioSelector } from "./ScenarioSelector";
 import { toSnakeCase } from "@/utils/ui";
-import { getExperiments } from "@/app/api/api";
+import { getExperiments } from "@/lib/api";
 
 export default function ExperimentForm({ templates, scenarios }: { templates: any[], scenarios: any[] }) {
     const router = useRouter();
@@ -101,24 +101,32 @@ export default function ExperimentForm({ templates, scenarios }: { templates: an
             timeout: timeout
         };
 
-        try {
-            const res = await fetch('/api/experiments/run', {
+                try {
+            const res = await fetch('/api/experiments', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
             });
-            if (res.ok) {
+                                    if (res.ok) {
+                const data = await res.json();
                 toast.success("Experiment launched successfully!");
                 router.refresh();
-                router.push('/experiments');
+                if (data.id) {
+                    router.push(`/experiments/view?id=${data.id}`);
+                } else {
+                    router.push('/experiments');
+                }
+
             } else {
-                toast.error("Failed to launch experiment");
+                const errData = await res.json();
+                toast.error(`Failed to launch experiment: ${errData.error || res.statusText}`);
             }
         } catch (e) {
             toast.error("Error launching experiment");
         } finally {
             setLoading(false);
         }
+
     };
 
     const totalJobs = selectedScenarios.length * selectedAlternatives.length * reps;
